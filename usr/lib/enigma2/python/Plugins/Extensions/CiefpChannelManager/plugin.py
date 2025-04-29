@@ -2,7 +2,7 @@ import os
 import shutil
 import zipfile
 import requests
-from enigma import eListboxPythonMultiContent
+from enigma import eListboxPythonMultiContent, eTimer
 from Components.Pixmap import Pixmap
 from Components.ActionMap import ActionMap
 from Components.Label import Label
@@ -13,13 +13,15 @@ from Screens.Screen import Screen
 from Tools.Directories import fileExists
 from enigma import eDVBDB
 
-PLUGIN_VERSION = "1.4"
+PLUGIN_VERSION = "1.5"
 PLUGIN_ICON = "icon.png"
 PLUGIN_NAME = "CiefpChannelManager"
 TMP_DOWNLOAD = "/tmp/ciefp-E2-75E-34W"
 TMP_SELECTED = "/tmp/CiefpChannelManager"
 PLUGIN_DESCRIPTION = "Manage Bouquets and Channels Plugin"
 GITHUB_API_URL = "https://api.github.com/repos/ciefp/ciefpsettings-enigma2-zipped/contents/"
+PLUGIN_VERSION_URL = "https://raw.githubusercontent.com/ciefp/CiefpChannelManager/refs/heads/main/version.txt"
+INSTALLER_URL = "https://raw.githubusercontent.com/ciefp/CiefpChannelManager/main/installer.sh"
 STATIC_NAMES = ["ciefp-E2-75E-34W"]
 
 class CiefpChannelEditor(Screen):
@@ -28,9 +30,9 @@ class CiefpChannelEditor(Screen):
             <widget name="channel_list" position="0,0" size="700,700" scrollbarMode="showOnDemand" itemHeight="33" font="Regular;28" />
             <widget name="background" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/CiefpChannelManager/background3.png" position="700,0" size="500,800" />
             <widget name="status" position="0,710" size="700,50" font="Regular;24" />
-            <widget name="green_button" position="0,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F771F" foregroundColor="#000000" />
-            <widget name="yellow_button" position="170,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F9F13" foregroundColor="#000000" />
-            <widget name="red_button" position="340,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F1313" foregroundColor="#000000" />
+            <widget name="red_button" position="0,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F1313" foregroundColor="#000000" />
+            <widget name="green_button" position="170,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F771F" foregroundColor="#000000" />
+            <widget name="yellow_button" position="340,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F9F13" foregroundColor="#000000" />
             <widget name="blue_button" position="510,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F1F77" foregroundColor="#000000" />
         </screen>
     """
@@ -49,18 +51,18 @@ class CiefpChannelEditor(Screen):
         self["channel_list"] = MenuList([])
         self["background"] = Pixmap()
         self["status"] = Label("Loading channels...")
+        self["red_button"] = Label("Delete")
         self["green_button"] = Label("Save")
         self["yellow_button"] = Label("Move Mode")
-        self["red_button"] = Label("Delete")
         self["blue_button"] = Label("Select Group")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions", "DirectionActions"], {
             "ok": self.select_channel,
             "cancel": self.exit,
             "up": self.navigate_or_move_up,
             "down": self.navigate_or_move_down,
+            "red": self.delete_selected,
             "green": self.save_settings,
             "yellow": self.toggle_move_mode,
-            "red": self.delete_selected,
             "blue": self.select_group,
         }, -1)
         self.onLayoutFinish.append(self.load_channels)
@@ -98,37 +100,31 @@ class CiefpChannelEditor(Screen):
                     elif line.startswith("#SERVICE"):
                         parts = line.split(":")
                         if len(parts) >= 10:
-                            # Ignoriši markere (#SERVICE ...:64:...)
                             if parts[1] == "64":
                                 with open(debug_file, 'a') as df:
                                     df.write(f"Ignoring marker service: {line}\n")
                                 i += 1
                                 continue
-                            # Ignoriši #SERVICE 4097:0:2
                             if parts[0] == "#SERVICE 4097" and parts[1] == "0" and parts[2] == "2":
                                 with open(debug_file, 'a') as df:
                                     df.write(f"Ignoring IPTV service (4097:0:2): {line}\n")
                                 i += 1
-                                # Preskoči sledeću #DESCRIPTION liniju ako postoji
                                 if i < len(lines) and lines[i].strip().startswith("#DESCRIPTION"):
                                     i += 1
                                 continue
-                            # Obradi IPTV kanale (#SERVICE 4097:0:1)
                             if parts[0] == "#SERVICE 4097" and parts[1] == "0" and parts[2] == "1":
                                 channel_name = "Unknown IPTV"
-                                # Proveri sledeću liniju za #DESCRIPTION
                                 if i + 1 < len(lines):
                                     next_line = lines[i + 1].strip()
                                     if next_line.startswith("#DESCRIPTION"):
                                         channel_name = next_line.replace("#DESCRIPTION", "").strip()
-                                        i += 1  # Preskoči #DESCRIPTION liniju
+                                        i += 1
                                 self.channel_list.append(channel_name)
                                 self.channel_refs[channel_name] = line
                                 with open(debug_file, 'a') as df:
                                     df.write(f"IPTV channel: {channel_name}, Service: {line}\n")
                                 i += 1
                                 continue
-                            # Obradi ostale kanale preko lamedb
                             sid = parts[3]
                             tsid = parts[4]
                             onid = parts[5]
@@ -154,7 +150,6 @@ class CiefpChannelEditor(Screen):
                                 df.write(f"Channel name: {channel_name}\n")
                         i += 1
                     elif line.startswith("#DESCRIPTION"):
-                        # Dodaj kao marker samo ako nije već obrađen za IPTV kanal
                         marker_name = line.replace("#DESCRIPTION", "").strip()
                         self.channel_list.append(marker_name)
                         self.channel_refs[marker_name] = line
@@ -405,7 +400,6 @@ class CiefpChannelEditor(Screen):
                 line = self.channel_refs.get(channel)
                 if line:
                     new_lines.append(line + "\n")
-                    # Ako je IPTV kanal, dodaj #DESCRIPTION
                     if line.startswith("#SERVICE 4097:0:1"):
                         new_lines.append(f"#DESCRIPTION {channel}\n")
             debug_file = "/tmp/channel_editor_debug.log"
@@ -449,9 +443,9 @@ class CiefpBouquetEditor(Screen):
             <widget name="bouquet_list" position="0,0" size="700,700" scrollbarMode="showOnDemand" itemHeight="33" font="Regular;28" />
             <widget name="background" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/CiefpChannelManager/background2.png" position="700,0" size="500,800" />
             <widget name="status" position="0,710" size="700,50" font="Regular;24" />
-            <widget name="green_button" position="0,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F771F" foregroundColor="#000000" />
-            <widget name="yellow_button" position="170,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F9F13" foregroundColor="#000000" />
-            <widget name="red_button" position="340,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F1313" foregroundColor="#000000" />
+            <widget name="red_button" position="0,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F1313" foregroundColor="#000000" />
+            <widget name="green_button" position="170,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F771F" foregroundColor="#000000" />
+            <widget name="yellow_button" position="340,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F9F13" foregroundColor="#000000" />
             <widget name="blue_button" position="510,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F1F77" foregroundColor="#000000" />
         </screen>
     """
@@ -467,18 +461,18 @@ class CiefpBouquetEditor(Screen):
         self["bouquet_list"] = MenuList([])
         self["background"] = Pixmap()
         self["status"] = Label("Loading bouquets...")
+        self["red_button"] = Label("Delete")
         self["green_button"] = Label("Save")
         self["yellow_button"] = Label("Move Mode")
-        self["red_button"] = Label("Exit")
         self["blue_button"] = Label("Channels")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions", "DirectionActions"], {
             "ok": self.toggle_selection,
             "cancel": self.exit,
             "up": self.navigate_or_move_up,
             "down": self.navigate_or_move_down,
+            "red": self.delete_selected_bouquets,
             "green": self.save_settings,
             "yellow": self.toggle_move_mode,
-            "red": self.exit,
             "blue": self.open_channel_editor,
         }, -1)
         self.onLayoutFinish.append(self.load_bouquets)
@@ -561,12 +555,52 @@ class CiefpBouquetEditor(Screen):
             df.write(f"Toggle selection: {current_bouquet}, Selected bouquets: {self.selected_bouquets}\n")
         self.update_list()
 
+    def delete_selected_bouquets(self):
+        debug_file = "/tmp/channel_editor_debug.log"
+        if not self.selected_bouquets:
+            self.session.open(
+                MessageBox,
+                "No bouquets selected to delete.",
+                MessageBox.TYPE_INFO,
+                timeout=5
+            )
+            with open(debug_file, 'a') as df:
+                df.write(f"No bouquets to delete. Selected: {self.selected_bouquets}\n")
+            return
+        with open(debug_file, 'a') as df:
+            df.write(f"Deleting bouquets: {self.selected_bouquets}\n")
+        bouquets_to_delete = self.selected_bouquets[:]
+        for bouquet in bouquets_to_delete:
+            bouquet_file = self.bouquet_names.get(bouquet)
+            if bouquet_file:
+                file_path = os.path.join("/etc/enigma2", bouquet_file)
+                if os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                        with open(debug_file, 'a') as df:
+                            df.write(f"Deleted file: {file_path}\n")
+                    except Exception as e:
+                        self["status"].setText(f"Error deleting {bouquet_file}: {str(e)}")
+                        with open(debug_file, 'a') as df:
+                            df.write(f"Error deleting {bouquet_file}: {str(e)}\n")
+                        return
+        self.bouquet_list = [bq for bq in self.bouquet_list if bq not in bouquets_to_delete]
+        self.selected_bouquets = []
+        self.bouquet_names = {name: file for name, file in self.bouquet_names.items() if name in self.bouquet_list}
+        self.update_list()
+        if not self.bouquet_list:
+            self["status"].setText("No bouquets left!")
+        else:
+            self["status"].setText(f"Deleted {len(bouquets_to_delete)} bouquets.")
+        with open(debug_file, 'a') as df:
+            df.write(f"After deletion, bouquet_list: {self.bouquet_list[:5]}...\n")
+
     def toggle_move_mode(self):
         self.move_mode = not self.move_mode
         self["yellow_button"].setText("Disable Move" if self.move_mode else "Move Mode")
         self["status"].setText("Move Mode enabled" if self.move_mode else "Move Mode disabled")
         if not self.move_mode:
-            self.selected_bouquets = []  # Resetuj selekciju kada se isključi Move Mode
+            self.selected_bouquets = []
         debug_file = "/tmp/channel_editor_debug.log"
         with open(debug_file, 'a') as df:
             df.write(f"Toggle move mode: move_mode={self.move_mode}, selected_bouquets={self.selected_bouquets}\n")
@@ -726,16 +760,16 @@ class CiefpBouquetEditor(Screen):
 
 class CiefpChannelManager(Screen):
     skin = """
-        <screen position="center,center" size="1600,800" title="..:: Ciefp Bouquet Updater ::..    (Version{version})">
+        <screen position="center,center" size="1600,800" title="..:: Ciefp Bouquet Updater ::..    (Version {version})">
             <widget name="left_list" position="0,0" size="620,700" scrollbarMode="showOnDemand" itemHeight="33" font="Regular;28" />
             <widget name="right_list" position="630,0" size="610,700" scrollbarMode="showOnDemand" itemHeight="33" font="Regular;28" />
             <widget name="background" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/CiefpChannelManager/background.png" position="1240,0" size="360,800" />
             <widget name="status" position="0,710" size="840,50" font="Regular;24" />
-            <widget name="green_button" position="0,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F771F" foregroundColor="#000000" />
-            <widget name="yellow_button" position="170,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F9F13" foregroundColor="#000000" />
-            <widget name="red_button" position="340,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F1313" foregroundColor="#000000" />
+            <widget name="red_button" position="0,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F1313" foregroundColor="#000000" />
+            <widget name="green_button" position="170,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F771F" foregroundColor="#000000" />
+            <widget name="yellow_button" position="340,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#9F9F13" foregroundColor="#000000" />
             <widget name="blue_button" position="510,750" size="150,35" font="Bold;28" halign="center" backgroundColor="#1F1F77" foregroundColor="#000000" />
-            <widget name="version_info" position="680,750" size="480,40" font="Regular;20" foregroundColor="#FFFFFF" />
+            <widget name="version_info" position="680,750" size="560,40" font="Regular;20" foregroundColor="#FFFFFF" />
         </screen>
     """.format(version=PLUGIN_VERSION)
 
@@ -744,33 +778,101 @@ class CiefpChannelManager(Screen):
         self.session = session
         self.selected_bouquets = []
         self.bouquet_names = {}
+        self.latest_version = None
         self["left_list"] = MenuList([])
         self["right_list"] = MenuList([])
         self["background"] = Pixmap()
         self["status"] = Label("Loading bouquets...")
+        self["red_button"] = Label("Exit")
         self["green_button"] = Label("Copy")
         self["yellow_button"] = Label("Install")
-        self["red_button"] = Label("Exit")
-        self["blue_button"] = Label("Editor")  # Novo dugme
+        self["blue_button"] = Label("Editor")
         self["version_info"] = Label("")
         self["actions"] = ActionMap(["OkCancelActions", "ColorActions"], {
             "ok": self.select_item,
             "cancel": self.exit,
             "up": self.up,
             "down": self.down,
+            "red": self.exit,
             "green": self.copy_files,
             "yellow": self.install,
-            "red": self.exit,
-            "blue": self.open_bouquet_editor,  # Nova funkcija
+            "blue": self.open_bouquet_editor,
         }, -1)
-        self.onLayoutFinish.append(self.fetch_version_info)
+        self.onLayoutFinish.append(self.check_plugin_version)
+        self.onLayoutFinish.append(self.fetch_list_version_info)
         self.download_settings()
         self.load_bouquets()
 
-    def open_bouquet_editor(self):
-        self.session.open(CiefpBouquetEditor)
+    def check_plugin_version(self):
+        debug_file = "/tmp/channel_editor_debug.log"
+        try:
+            response = requests.get(PLUGIN_VERSION_URL)
+            response.raise_for_status()
+            self.latest_version = response.text.strip()
+            with open(debug_file, 'a') as df:
+                df.write(f"Plugin version check: Current={PLUGIN_VERSION}, Latest={self.latest_version}\n")
+            if self.latest_version != PLUGIN_VERSION:
+                self.setTitle(f"..:: Ciefp Bouquet Updater ::.. (Version {PLUGIN_VERSION}) (Update available: {self.latest_version})")
+                # Odlaganje prikaza MessageBox-a
+                self.upgrade_timer = eTimer()
+                self.upgrade_timer.callback.append(self.show_upgrade_prompt)
+                self.upgrade_timer.start(1000, True)  # 1 sekunda odlaganja
+            else:
+                self.setTitle(f"..:: Ciefp Bouquet Updater ::.. (Version {PLUGIN_VERSION})")
+        except Exception as e:
+            with open(debug_file, 'a') as df:
+                df.write(f"Error checking plugin version: {str(e)}\n")
+            self.setTitle(f"..:: Ciefp Bouquet Updater ::.. (Version {PLUGIN_VERSION})")
 
-    def fetch_version_info(self):
+    def show_upgrade_prompt(self):
+        debug_file = "/tmp/channel_editor_debug.log"
+        with open(debug_file, 'a') as df:
+            df.write(f"Showing upgrade prompt for version: {self.latest_version}\n")
+        if self.latest_version and self.latest_version != PLUGIN_VERSION:
+            self.session.openWithCallback(
+                self.confirm_upgrade,
+                MessageBox,
+                f"A new version ({self.latest_version}) is available. Would you like to upgrade the plugin now?",
+                MessageBox.TYPE_YESNO
+            )
+
+    def confirm_upgrade(self, result):
+        if result:
+            self.upgrade_plugin()
+
+    def upgrade_plugin(self):
+        debug_file = "/tmp/channel_editor_debug.log"
+        try:
+            cmd = f"wget -q --no-check-certificate {INSTALLER_URL} -O - | /bin/sh"
+            result = os.system(cmd)
+            with open(debug_file, 'a') as df:
+                df.write(f"Plugin upgrade executed: Command={cmd}, Result={result}\n")
+            if result == 0:
+                self.session.open(
+                    MessageBox,
+                    "Plugin upgrade completed successfully. Please restart the plugin or Enigma2 to apply changes.",
+                    MessageBox.TYPE_INFO,
+                    timeout=10
+                )
+            else:
+                self.session.open(
+                    MessageBox,
+                    f"Plugin upgrade failed with error code: {result}. Check logs for details.",
+                    MessageBox.TYPE_ERROR,
+                    timeout=10
+                )
+        except Exception as e:
+            with open(debug_file, 'a') as df:
+                df.write(f"Error during plugin upgrade: {str(e)}\n")
+            self.session.open(
+                MessageBox,
+                f"Error during plugin upgrade: {str(e)}",
+                MessageBox.TYPE_ERROR,
+                timeout=10
+            )
+
+    def fetch_list_version_info(self):
+        debug_file = "/tmp/channel_editor_debug.log"
         try:
             response = requests.get(GITHUB_API_URL)
             response.raise_for_status()
@@ -778,11 +880,18 @@ class CiefpChannelManager(Screen):
             for file in files:
                 if any(name in file["name"] for name in STATIC_NAMES) and file["name"].endswith(".zip"):
                     version_with_date = file["name"].replace(".zip", "")
-                    self["version_info"].setText(f"Version: ({version_with_date})")
+                    self["version_info"].setText(f"List: {version_with_date}")
+                    with open(debug_file, 'a') as df:
+                        df.write(f"List version fetched: {version_with_date}\n")
                     return
-            self["version_info"].setText(f"Version: (Date not available)")
+            self["version_info"].setText("List: (Date not available)")
         except Exception as e:
-            self["version_info"].setText(f"Version: (Error fetching date)")
+            with open(debug_file, 'a') as df:
+                df.write(f"Error fetching list version: {str(e)}\n")
+            self["version_info"].setText("List: (Error fetching date)")
+
+    def open_bouquet_editor(self):
+        self.session.open(CiefpBouquetEditor)
 
     def download_settings(self):
         self["status"].setText("Fetching file list from GitHub...")
@@ -817,10 +926,10 @@ class CiefpChannelManager(Screen):
             self["status"].setText(f"Error: {str(e)}")
 
     def parse_satellites(self):
-        pass  # Ova funkcija nije implementirana u originalnom kodu, ostavljena kao placeholder
+        pass
 
     def load_bouquets(self):
-        self.bouquet_names = {}  # Rečnik: {puna_linija: ime_fajla}
+        self.bouquet_names = {}
         bouquet_dir = TMP_DOWNLOAD
         bouquets_file = os.path.join(bouquet_dir, "bouquets.tv")
 
@@ -828,7 +937,6 @@ class CiefpChannelManager(Screen):
             self["status"].setText("Error: Temporary directory not found!")
             return
 
-        # Čitanje redosleda iz bouquets.tv
         bouquet_order = []
         if fileExists(bouquets_file):
             with open(bouquets_file, 'r', encoding='utf-8') as file:
@@ -843,7 +951,6 @@ class CiefpChannelManager(Screen):
             self["status"].setText("Error: bouquets.tv not found!")
             return
 
-        # Skeniranje .tv fajlova i izvlačenje naziva
         bouquet_display_list = []
         name_to_file = {}
 
@@ -854,14 +961,13 @@ class CiefpChannelManager(Screen):
                     with open(file_path, 'r', encoding='utf-8') as f:
                         first_line = f.readline().strip()
                         if first_line.startswith("#NAME"):
-                            display_name = first_line.replace("#NAME", "", 1).strip()  # Uklanjamo #NAME
+                            display_name = first_line.replace("#NAME", "", 1).strip()
                             self.bouquet_names[first_line] = bouquet_file
                             name_to_file[bouquet_file] = display_name
                 except Exception as e:
                     self["status"].setText(f"Error reading {bouquet_file}: {str(e)}")
                     return
 
-        # Popunjavanje liste prema redosledu iz bouquets.tv
         for bouquet_file in bouquet_order:
             if bouquet_file in name_to_file:
                 bouquet_display_list.append(name_to_file[bouquet_file])
@@ -935,9 +1041,6 @@ class CiefpChannelManager(Screen):
         self["status"].setText("Files copied and bouquets.tv updated successfully!")
 
     def install(self):
-        """
-        Instalira selektovane bukete u /etc/enigma2.
-        """
         if not self.selected_bouquets:
             self.session.open(MessageBox, "No bouquets selected!", MessageBox.TYPE_ERROR)
             return
@@ -960,7 +1063,6 @@ class CiefpChannelManager(Screen):
             'lamedb': enigma2_dir
         }
 
-        # Kopiranje selektovanih buketa uz brisanje starih fajlova
         for bouquet_name in self.selected_bouquets:
             bouquet_file = next((f for l, f in self.bouquet_names.items() if bouquet_name in l), None)
             if not bouquet_file:
@@ -971,14 +1073,13 @@ class CiefpChannelManager(Screen):
             if os.path.exists(source_path):
                 try:
                     if os.path.exists(destination_path):
-                        os.remove(destination_path)  # Briše stari fajl pre kopiranja
+                        os.remove(destination_path)
                     shutil.copy(source_path, destination_path)
                     installed_files.append(bouquet_file)
                 except Exception as e:
                     self.session.open(MessageBox, f"Failed to install {bouquet_file}: {str(e)}", MessageBox.TYPE_ERROR)
                     return
 
-        # Kopiranje zajedničkih fajlova uz brisanje starih
         for file_name, target_dir in common_files.items():
             source_path = os.path.join(TMP_DOWNLOAD, file_name)
             destination_path = os.path.join(target_dir, file_name)
@@ -988,7 +1089,7 @@ class CiefpChannelManager(Screen):
                     if not os.path.exists(target_dir):
                         os.makedirs(target_dir)
                     if os.path.exists(destination_path):
-                        os.remove(destination_path)  # Briše stari lamedb pre kopiranja
+                        os.remove(destination_path)
                     shutil.copy(source_path, destination_path)
                     installed_files.append(file_name)
                 except Exception as e:
@@ -1024,13 +1125,13 @@ class CiefpChannelManager(Screen):
 
     def down(self):
         self["left_list"].down()
-    
+
     def exit(self):
         self.close()
 
 def main(session, **kwargs):
-    session.open(CiefpChannelManager)        
-        
+    session.open(CiefpChannelManager)
+
 def Plugins(**kwargs):
     return [
         PluginDescriptor(
