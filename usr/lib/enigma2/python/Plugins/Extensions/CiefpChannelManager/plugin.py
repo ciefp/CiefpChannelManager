@@ -13,7 +13,7 @@ from Screens.Screen import Screen
 from Tools.Directories import fileExists
 from enigma import eDVBDB
 
-PLUGIN_VERSION = "1.5"
+PLUGIN_VERSION = "1.6"
 PLUGIN_ICON = "icon.png"
 PLUGIN_NAME = "CiefpChannelManager"
 TMP_DOWNLOAD = "/tmp/ciefp-E2-75E-34W"
