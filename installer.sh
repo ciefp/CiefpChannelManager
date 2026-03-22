@@ -98,7 +98,7 @@ sync
 echo ""
 echo ""
 echo "#########################################################"
-echo "#          CiefpChannelManager INSTALLED SUCCESSFULLY          #"
+echo "#        CiefpChannelManager INSTALLED SUCCESSFULLY     #"
 echo "#                  developed by ciefp                   #"
 echo "#                  .::CiefpSettings::.                  #"
 echo "#               https://github.com/ciefp                #"
