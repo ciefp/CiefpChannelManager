@@ -2,9 +2,12 @@
 ##setup command=wget -q "--no-check-certificate" https://raw.githubusercontent.com/ciefp/CiefpChannelManager/main/installer.sh -O - | /bin/sh
 
 ######### Only This 2 lines to edit with new version ######
-version='1.0'
+version='1.5'
 changelog='\nFix little bugs\nUpdated Picons List'
 ##############################################################
+
+# Check if we should skip restart (for batch installations)
+SKIP_REBOOT="${SKIP_REBOOT:-0}"
 
 TMPPATH=/tmp/CiefpChannelManager
 
@@ -95,14 +98,21 @@ sync
 echo ""
 echo ""
 echo "#########################################################"
-echo "#        CiefpChannelManager INSTALLED SUCCESSFULLY     #"
+echo "#          CiefpChannelManager INSTALLED SUCCESSFULLY          #"
 echo "#                  developed by ciefp                   #"
-echo "#                   Big thanks Qu4k3                    #"
-echo "#                  .::ciefpsettings::.                  #"
-echo "#                  https://Sat-Club.EU                  #"
+echo "#                  .::CiefpSettings::.                  #"
+echo "#               https://github.com/ciefp                #"
 echo "#########################################################"
-echo "#           your Device will RESTART Now                #"
-echo "#########################################################"
-sleep 5
-killall -9 enigma2
+
+# Only restart if SKIP_REBOOT is not set to 1
+if [ "$SKIP_REBOOT" = "0" ]; then
+    echo "#           your Device will RESTART Now                #"
+    echo "#########################################################"
+    sleep 5
+    killall -9 enigma2
+else
+    echo "#        Restart skipped (batch installation)           #"
+    echo "#########################################################"
+fi
+
 exit 0
